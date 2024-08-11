@@ -1,10 +1,9 @@
 package game
 
 import (
+	_ "embed"
 	"fmt"
-	"image/color"
 	"log"
-	"math"
 	"sort"
 
 	"github.com/alexmgriffiths/gam/entities"
@@ -17,42 +16,49 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 )
 
+//go:embed lighting.kage
+var lighting_shader []byte
+
 const (
 	screenWidth  = 240
 	screenHeight = 180
 	tileSize     = 16
 )
 
-var (
-	bgImage        *ebiten.Image
-	fgImage        *ebiten.Image
-	maskedFgImage  = ebiten.NewImage(240, 180)
-	spotLightImage *ebiten.Image
-)
-
 type Game struct {
 	layers  [][]int
 	objects [][]int
 
+	time     float64
+	lights   []entities.LightEmitter
+	shader   *ebiten.Shader
+	vertices [4]ebiten.Vertex
+
 	gameTiles   [][]tiles.Tile
 	gameObjects [][]objects.Object
 
-	lightMask *ebiten.Image
-
 	tilemap        *tiles.Tilemap
+	normalmap      *tiles.Tilemap
 	renderables    []entities.Renderable
 	objectEntities []objects.Object
 	player         *player.Player
 	keys           []ebiten.Key
 	camera         *Camera
+
+	renderNormals bool
 }
 
 func (g *Game) Update() error {
+	g.time = 5.01
 	g.keys = inpututil.AppendPressedKeys(g.keys[:0])
 	g.player.Tick(g.keys, g.renderables)
 	g.camera.Tick(g.player)
 	for _, x := range g.objectEntities {
 		x.Tick()
+	}
+
+	if inpututil.IsKeyJustReleased(ebiten.KeyArrowRight) {
+		g.renderNormals = true
 	}
 	return nil
 }
@@ -65,7 +71,7 @@ func (g *Game) LoadLevel() {
 		g.gameTiles[y] = make([]tiles.Tile, len(g.layers[0]))
 		for x := 0; x < len(g.layers[0]); x++ {
 			tileType := g.layers[y][x]
-			tile := tiles.NewTile(g.tilemap, tileType, x*tileSize, y*tileSize)
+			tile := tiles.NewTile(g.tilemap, g.normalmap, tileType, x*tileSize, y*tileSize)
 			g.gameTiles[y][x] = tile
 		}
 	}
@@ -74,15 +80,79 @@ func (g *Game) LoadLevel() {
 		g.gameObjects[y] = make([]objects.Object, len(g.objects[0]))
 		for x := 0; x < len(g.objects[0]); x++ {
 			objectType := g.objects[y][x]
-			object := objects.NewObject(g.tilemap, objectType, x*tileSize, y*tileSize)
+			object := objects.NewObject(g.tilemap, g.normalmap, objectType, x*tileSize, y*tileSize)
 			g.gameObjects[y][x] = object
 		}
 	}
 }
 
-func (g *Game) Draw(screen *ebiten.Image) {
+func (g *Game) PreRender(startX, startY, endX, endY int) (*ebiten.Image, *ebiten.Image) {
+	buffer := ebiten.NewImage(screenWidth, screenHeight)
+	normalBuffer := ebiten.NewImage(screenWidth, screenHeight)
 
-	cameraBuffer := 2 // Number of extra tiles to render around the screen edges
+	// Render tiles
+	for y := startY; y < endY; y++ {
+		for x := startX; x < endX; x++ {
+			t := g.layers[y][x]
+
+			screenX := (x * tileSize) - g.camera.X
+			screenY := (y * tileSize) - g.camera.Y
+
+			tileAt := tiles.NewTile(g.tilemap, g.normalmap, t, screenX, screenY)
+			if tileAt != nil {
+				tileAt.Render(buffer, normalBuffer)
+			}
+		}
+	}
+
+	// Prepare entities
+	var renderables []entities.Renderable
+	var lights []entities.LightEmitter
+
+	for y := startY; y < endY; y++ {
+		for x := startX; x < endX; x++ {
+			t := g.gameObjects[y][x]
+			if t != nil {
+				t.SetPosition((x*tileSize)-g.camera.X, ((y*tileSize)-g.camera.Y)-16)
+				renderables = append(renderables, t)
+				g.objectEntities = append(g.objectEntities, t)
+				isLight, lightParameters := t.GetLightParameters()
+				if isLight {
+					lights = append(lights, lightParameters)
+				}
+			}
+		}
+	}
+
+	// Render player
+	renderables = append(renderables, g.player)
+
+	// Render entities
+	// Sort renderables by Y position, taking into account the mid-point logic
+	sort.SliceStable(renderables, func(i, j int) bool {
+		iY := renderables[i].GetY()
+		jY := renderables[j].GetY()
+
+		if renderables[i] == g.player {
+			return iY-g.player.CameraY < jY
+		} else if renderables[j] == g.player {
+			return jY-g.player.CameraY < iY
+		}
+		// Sort so that entities with lower base Y are rendered first
+		return iY < jY
+	})
+
+	g.renderables = renderables
+	g.lights = lights
+	// Render sorted objects and player
+	for _, r := range renderables {
+		r.Render(buffer, normalBuffer)
+	}
+	return buffer, normalBuffer
+}
+
+func (g *Game) RenderCamera() (int, int, int, int) {
+	cameraBuffer := 8 // Number of extra tiles to render around the screen edges
 
 	startX := (g.camera.X / tileSize) - cameraBuffer
 	startY := (g.camera.Y / tileSize) - cameraBuffer
@@ -105,48 +175,63 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	if endY >= len(g.layers) {
 		endY = len(g.layers)
 	}
+	return startX, startY, endX, endY
+}
 
-	for y := startY; y < endY; y++ {
-		for x := startX; x < endX; x++ {
-			t := g.layers[y][x]
+func (g *Game) Draw(screen *ebiten.Image) {
 
-			screenX := (x * tileSize) - g.camera.X
-			screenY := (y * tileSize) - g.camera.Y
+	// Setup shaders
+	// Dest (screen)
+	bounds := screen.Bounds()
+	g.vertices[0].DstX = float32(bounds.Min.X) // top-left
+	g.vertices[0].DstY = float32(bounds.Min.Y) // top-left
+	g.vertices[1].DstX = float32(bounds.Max.X) // top-right
+	g.vertices[1].DstY = float32(bounds.Min.Y) // top-right
+	g.vertices[2].DstX = float32(bounds.Min.X) // bottom-left
+	g.vertices[2].DstY = float32(bounds.Max.Y) // bottom-left
+	g.vertices[3].DstX = float32(bounds.Max.X) // bottom-right
+	g.vertices[3].DstY = float32(bounds.Max.Y) // bottom-right
 
-			tileAt := tiles.NewTile(g.tilemap, t, screenX, screenY)
-			if tileAt != nil {
-				tileAt.Render(screen)
-			}
-		}
+	// Source (rendered screen)
+	srcBounds := screen.Bounds()
+	g.vertices[0].SrcX = float32(srcBounds.Min.X) // top-left
+	g.vertices[0].SrcY = float32(srcBounds.Min.Y) // top-left
+	g.vertices[1].SrcX = float32(srcBounds.Max.X) // top-right
+	g.vertices[1].SrcY = float32(srcBounds.Min.Y) // top-right
+	g.vertices[2].SrcX = float32(srcBounds.Min.X) // bottom-left
+	g.vertices[2].SrcY = float32(srcBounds.Max.Y) // bottom-left
+	g.vertices[3].SrcX = float32(srcBounds.Max.X) // bottom-right
+	g.vertices[3].SrcY = float32(srcBounds.Max.Y) // bottom-right
+
+	startX, startY, endX, endY := g.RenderCamera()
+	buffer, normalBuffer := g.PreRender(startX, startY, endX, endY)
+
+	op := &ebiten.DrawTrianglesShaderOptions{}
+	op.Images[0] = buffer
+	op.Images[1] = normalBuffer
+	op.Uniforms = make(map[string]interface{})
+
+	// Pack light data into uniform arrays
+	var lightPositions = make([]float32, 600) // Max lights of 100
+
+	for i, light := range g.lights {
+		base := i * 6
+		lightPositions[base] = float32(light.X)
+		lightPositions[base+1] = float32(light.Y)
+		lightPositions[base+2] = light.Intensity
+		lightPositions[base+3] = light.Color[0]
+		lightPositions[base+4] = light.Color[1]
+		lightPositions[base+5] = light.Color[2]
 	}
 
-	var renderables []entities.Renderable
+	cx, cy := ebiten.CursorPosition()
+	op.Uniforms["Cursor"] = []float32{float32(cx), float32(cy)}
+	op.Uniforms["Time"] = float32(g.time)
+	op.Uniforms["LightCount"] = len(lightPositions)
+	op.Uniforms["LightPositions"] = lightPositions
 
-	for y := startY; y < endY; y++ {
-		for x := startX; x < endX; x++ {
-			t := g.gameObjects[y][x]
-			if t != nil {
-				t.SetPosition((x*tileSize)-g.camera.X, (y*tileSize)-g.camera.Y)
-				renderables = append(renderables, t)
-				g.objectEntities = append(g.objectEntities, t)
-			}
-		}
-	}
-	renderables = append(renderables, g.player)
-	// Sort renderables by Y position, taking into account the mid-point logic
-	sort.SliceStable(renderables, func(i, j int) bool {
-		iY := renderables[i].GetY()
-		jY := renderables[j].GetY()
-
-		// Sort so that entities with lower base Y are rendered first
-		return iY < jY
-	})
-	g.renderables = renderables
-	// Render sorted objects and player
-	for _, r := range renderables {
-		r.Render(screen)
-	}
-
+	indices := []uint16{0, 1, 2, 2, 1, 3} // map vertices to triangles
+	screen.DrawTrianglesShader(g.vertices[:], indices, g.shader, op)
 	// Debug
 	// for y := startY; y < endY; y++ {
 	// 	for x := startX; x < endX; x++ {
@@ -166,26 +251,6 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	return screenWidth, screenHeight
 }
 
-func createLightMask(radius int) *ebiten.Image {
-	diameter := radius * 2
-	mask := ebiten.NewImage(diameter, diameter)
-	mask.Fill(color.RGBA{100, 100, 100, 100}) // Start with a black (fully transparent) background
-
-	for y := 0; y < diameter; y++ {
-		for x := 0; x < diameter; x++ {
-			dx := float64(x - radius)
-			dy := float64(y - radius)
-			distance := math.Sqrt(dx*dx + dy*dy)
-			if distance < float64(radius) {
-				alpha := uint8(255 * (1 - distance/float64(radius)))
-				mask.Set(x, y, color.RGBA{255, 255, 255, alpha})
-			}
-		}
-	}
-
-	return mask
-}
-
 func Start() {
 	ebiten.SetWindowSize(640, 480)
 	ebiten.SetWindowTitle("Gam")
@@ -196,18 +261,27 @@ func Start() {
 	maxCameraX := len(homeLevel.Heightmap[0])*tileSize - screenWidth
 	maxCameraY := len(homeLevel.Heightmap)*tileSize - screenHeight
 
-	game := &Game{
-		camera:  NewCamera(maxCameraX, maxCameraY),
-		player:  player.NewPlayer(tiles.NewTilemap("assets/Tilemap/tilemap2_packed.png"), 0, 0),
-		tilemap: tiles.NewTilemap("assets/Tilemap/tilemap_packed.png"),
-		layers:  homeLevel.Heightmap,
-		objects: homeLevel.Objectmap,
+	// Load shader
+	shader, shaderErr := ebiten.NewShader(lighting_shader)
+	if shaderErr != nil {
+		log.Fatalf("Failed to load shader %s", shaderErr.Error())
 	}
 
-	lightMask := createLightMask(100)
-	game.lightMask = lightMask
-	game.LoadLevel()
+	game := &Game{
+		camera:    NewCamera(maxCameraX, maxCameraY),
+		player:    player.NewPlayer(tiles.NewTilemap("assets/Tilemap/tilemap2_packed.png"), tiles.NewTilemap("assets/Tilemap/tilemap2_packed_n.png"), 0, 0),
+		tilemap:   tiles.NewTilemap("assets/Tilemap/tilemap_packed.png"),
+		normalmap: tiles.NewTilemap("assets/Tilemap/tilemap_packed_n.png"),
+		layers:    homeLevel.Heightmap,
+		objects:   homeLevel.Objectmap,
+	}
 
+	game.lights = []entities.LightEmitter{}
+
+	game.time = 0
+	game.LoadLevel()
+	game.shader = shader
+	game.renderNormals = false
 	if err := ebiten.RunGame(game); err != nil {
 		log.Fatal(err)
 	}

@@ -1,0 +1,57 @@
+//go:build ignore
+
+// Specify the 'pixel' mode.
+//kage:unit pixels
+
+package main
+
+// Dynamic lights
+
+var Cursor vec2
+var Time float
+var LightCount int
+var LightPositions [600]float // Adjust size based on the number of lights 100 being max, each light has 6 data points
+
+func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
+	pos := dstPos.xy - imageDstOrigin()
+
+	// Initialize the final light color
+	dayColor := vec3(0.8, 0.8, 1.0)           // Daytime ambient light (light blue)
+	nightColor := vec3(0.05, 0.05, 0)         // Nighttime ambient light (dark blue)
+	dayNightFactor := (sin(Time) + 1.0) / 2.0 // Cycles between 0 and 1
+	ambientColor := mix(nightColor, dayColor, dayNightFactor)
+
+	// Initialize the final light color with ambient light
+	finalColor := ambientColor
+
+	// Scene ambient lighting
+	const ambient = 0.00 // Minimum ambient light
+
+	// Iterate over all the lights
+	for i := 0; i < 100; i++ {
+		if i >= LightCount {
+			break
+		}
+		base := i * 6
+		lightpos := vec3(LightPositions[base], LightPositions[base+1], 50)
+		lightdir := normalize(lightpos - vec3(pos, 0))
+		normal := normalize(imageSrc1UnsafeAt(srcPos).rgb*2.0 - 1.0)
+		diffuse := 0.75 * max(0.0, dot(normal, lightdir))
+		distance := length(lightpos.xy - pos)
+
+		// Attenuation parameters
+		const constant = 1.0
+		const linear = 0.14
+		const quadratic = 0.07
+		LightIntensity := LightPositions[base+2]
+
+		attenuation := 1.0 / (constant + linear*(distance/LightIntensity) + quadratic*((distance/LightIntensity)*(distance/LightIntensity)))
+		light := ambient + diffuse*attenuation
+
+		lightColor := vec3(LightPositions[base+3], LightPositions[base+4], LightPositions[base+5]) * light
+		finalColor += lightColor
+	}
+
+	finalLight := vec4(finalColor, 1.0)
+	return imageSrc0UnsafeAt(srcPos) * finalLight
+}

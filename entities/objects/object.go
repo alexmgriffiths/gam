@@ -8,8 +8,9 @@ import (
 
 type Object interface {
 	Tick()
-	Render(screen *ebiten.Image)
+	Render(screen *ebiten.Image, normalBuffer *ebiten.Image)
 	GetY() int
+	GetLightParameters() (bool, entities.LightEmitter)
 	SetPosition(x, y int)
 	GetBoundingBox() entities.BoundingBox
 }
@@ -25,11 +26,12 @@ const (
 	CAMPFIRE_OUT = 7
 )
 
-func NewObject(tilemap *tiles.Tilemap, objectType, x, y int) Object {
+func NewObject(tilemap *tiles.Tilemap, normalMap *tiles.Tilemap, objectType, x, y int) Object {
 	switch objectType {
 	case TREE_1:
 		return &Tree{
 			Image:  getTileImage(tilemap, 3, 0, 1, 2),
+			Normal: getTileImage(normalMap, 3, 0, 1, 2),
 			X:      x,
 			Y:      y - 16,
 			Width:  1,
@@ -38,6 +40,7 @@ func NewObject(tilemap *tiles.Tilemap, objectType, x, y int) Object {
 	case TREE_2:
 		return &Tree{
 			Image:  getTileImage(tilemap, 4, 0, 1, 2),
+			Normal: getTileImage(normalMap, 4, 0, 1, 2),
 			X:      x,
 			Y:      y - 16,
 			Width:  1,
@@ -46,6 +49,7 @@ func NewObject(tilemap *tiles.Tilemap, objectType, x, y int) Object {
 	case BUSH_1:
 		return &Bush{
 			Image:  getTileImage(tilemap, 5, 0, 1, 1),
+			Normal: getTileImage(normalMap, 5, 0, 1, 1),
 			X:      x,
 			Y:      y,
 			Width:  1,
@@ -54,6 +58,7 @@ func NewObject(tilemap *tiles.Tilemap, objectType, x, y int) Object {
 	case HOUSE_0:
 		return &Tree{
 			Image:  getTileImage(tilemap, 0, 1, 7, 4),
+			Normal: getTileImage(normalMap, 0, 1, 7, 4),
 			X:      x,
 			Y:      y - 16,
 			Width:  7,
@@ -62,6 +67,7 @@ func NewObject(tilemap *tiles.Tilemap, objectType, x, y int) Object {
 	case WELL:
 		return &Well{
 			Image:  getTileImageCustom(tilemap, 128, 120, 17, 25),
+			Normal: getTileImageCustom(normalMap, 128, 120, 17, 25),
 			X:      x,
 			Y:      y - 16,
 			Width:  1,
@@ -71,13 +77,13 @@ func NewObject(tilemap *tiles.Tilemap, objectType, x, y int) Object {
 		return &Campfire{
 			Type: 0,
 			X:    x,
-			Y:    y,
+			Y:    y - 16,
 		}
 	case CAMPFIRE_OUT:
 		return &Campfire{
 			Type: 1,
 			X:    x,
-			Y:    y,
+			Y:    y - 16,
 		}
 	default:
 		return nil

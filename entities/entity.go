@@ -10,8 +10,15 @@ type BoundingBox struct {
 }
 
 type Renderable interface {
-	Render(screen *ebiten.Image)
+	Render(screen *ebiten.Image, normalBuffer *ebiten.Image)
 	GetY() int
+	GetLightParameters() (bool, LightEmitter)
 	SetPosition(x, y int)
 	GetBoundingBox() BoundingBox
+}
+
+type LightEmitter struct {
+	X, Y      int
+	Intensity float32
+	Color     [3]float32
 }

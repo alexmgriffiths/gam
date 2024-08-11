@@ -42,7 +42,9 @@ func HomeLevel() *LevelMap {
 		{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 		{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 	}
-	return NewLevelMap(heightmap, objectMap)
+
+	lightMap := [][]int{}
+	return NewLevelMap(heightmap, objectMap, lightMap)
 }
 
 func (l *LevelMap) GetHeightmap() [][]int {

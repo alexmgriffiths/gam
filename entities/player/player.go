@@ -9,6 +9,7 @@ import (
 
 type Player struct {
 	Tilemap          *tiles.Tilemap
+	Normalmap        *tiles.Tilemap
 	X                int
 	Y                int
 	VelocityX        int
@@ -43,8 +44,8 @@ func (p *Player) GetBoundingBox() entities.BoundingBox {
 	}
 }
 
-func (p *Player) getPlayerImage() *ebiten.Image {
-	frameDuration := 5
+func (p *Player) getPlayerImage() (*ebiten.Image, *ebiten.Image) {
+	frameDuration := 10
 	if p.IsMoving {
 		p.AnimationCounter++
 		if p.AnimationCounter >= frameDuration {
@@ -59,18 +60,19 @@ func (p *Player) getPlayerImage() *ebiten.Image {
 	}
 
 	if p.Rotation == 1 {
-		return p.Tilemap.GetTileImage(25, p.AnimationFrame, 16, 16)
+		return p.Tilemap.GetTileImage(25, p.AnimationFrame, 16, 16), p.Normalmap.GetTileImage(25, p.AnimationFrame, 16, 16)
 	} else if p.Rotation == 2 {
-		return p.Tilemap.GetTileImage(26, p.AnimationFrame, 16, 16)
+		return p.Tilemap.GetTileImage(26, p.AnimationFrame, 16, 16), p.Normalmap.GetTileImage(26, p.AnimationFrame, 16, 16)
 	} else if p.Rotation == 3 {
-		return p.Tilemap.GetTileImage(23, p.AnimationFrame, 16, 16)
+		return p.Tilemap.GetTileImage(23, p.AnimationFrame, 16, 16), p.Normalmap.GetTileImage(23, p.AnimationFrame, 16, 16)
 	}
-	return p.Tilemap.GetTileImage(24, p.AnimationFrame, 16, 16)
+	return p.Tilemap.GetTileImage(24, p.AnimationFrame, 16, 16), p.Normalmap.GetTileImage(24, p.AnimationFrame, 16, 16)
 }
 
-func NewPlayer(tilemap *tiles.Tilemap, x, y int) *Player {
+func NewPlayer(tilemap *tiles.Tilemap, normalmap *tiles.Tilemap, x, y int) *Player {
 	return &Player{
 		Tilemap:          tilemap,
+		Normalmap:        normalmap,
 		X:                x,
 		Y:                y,
 		CameraX:          0,
@@ -145,8 +147,14 @@ func (p *Player) CheckCollision(nextX, nextY int, objects []entities.Renderable)
 	return false
 }
 
-func (p *Player) Render(screen *ebiten.Image) {
+func (p *Player) Render(screen *ebiten.Image, normalBuffer *ebiten.Image) {
 	options := &ebiten.DrawImageOptions{}
 	options.GeoM.Translate(float64(p.X-p.CameraX), float64(p.Y-p.CameraY))
-	screen.DrawImage(p.getPlayerImage(), options)
+	playerImage, playerNormal := p.getPlayerImage()
+	screen.DrawImage(playerImage, options)
+	normalBuffer.DrawImage(playerNormal, options)
+}
+
+func (p *Player) GetLightParameters() (bool, entities.LightEmitter) {
+	return false, entities.LightEmitter{}
 }

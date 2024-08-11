@@ -7,14 +7,16 @@ import (
 
 type Bush struct {
 	Image         *ebiten.Image
+	Normal        *ebiten.Image
 	X             int
 	Y             int
 	Width, Height int
 }
 
-func NewBush(image *ebiten.Image, x, y, width, height int) *Bush {
+func NewBush(image *ebiten.Image, normal *ebiten.Image, x, y, width, height int) *Bush {
 	return &Bush{
 		Image:  image,
+		Normal: normal,
 		X:      x,
 		Y:      y - 32,
 		Width:  width,
@@ -22,14 +24,19 @@ func NewBush(image *ebiten.Image, x, y, width, height int) *Bush {
 	}
 }
 
+func (t *Bush) GetLightParameters() (bool, entities.LightEmitter) {
+	return false, entities.LightEmitter{}
+}
+
 func (b *Bush) Tick() {
 	b.X++
 }
 
-func (b *Bush) Render(screen *ebiten.Image) {
+func (b *Bush) Render(screen *ebiten.Image, normalBuffer *ebiten.Image) {
 	op := &ebiten.DrawImageOptions{}
 	op.GeoM.Translate(float64(b.X), float64(b.Y))
 	screen.DrawImage(b.Image, op)
+	normalBuffer.DrawImage(b.Normal, op)
 }
 
 func (b *Bush) GetY() int {
